@@ -10,7 +10,7 @@ export Bra, Ket, Operator, OperatorBra, OperatorKet, SuperOperator
 
 export isket, isbra, isoper, isoperbra, isoperket, issuper, ket2dm
 export sqrtm
-export tensor, ⊗
+export tensor, ⊗, permute
 
 abstract type AbstractQuantumObject end
 abstract type QuantumObjectType end
@@ -661,12 +661,12 @@ julia> tensor(x_list...)
 Quantum Object:   type=Operator   dims=[2, 2, 2]   size=(8, 8)   ishermitian=true
 8×8 SparseMatrixCSC{ComplexF64, Int64} with 8 stored entries:
      ⋅          ⋅          ⋅      …      ⋅          ⋅      1.0+0.0im
-     ⋅          ⋅          ⋅             ⋅      1.0+0.0im      ⋅    
-     ⋅          ⋅          ⋅         1.0+0.0im      ⋅          ⋅    
-     ⋅          ⋅          ⋅             ⋅          ⋅          ⋅    
-     ⋅          ⋅          ⋅             ⋅          ⋅          ⋅    
-     ⋅          ⋅      1.0+0.0im  …      ⋅          ⋅          ⋅    
-     ⋅      1.0+0.0im      ⋅             ⋅          ⋅          ⋅    
+     ⋅          ⋅          ⋅             ⋅      1.0+0.0im      ⋅
+     ⋅          ⋅          ⋅         1.0+0.0im      ⋅          ⋅
+     ⋅          ⋅          ⋅             ⋅          ⋅          ⋅
+     ⋅          ⋅          ⋅             ⋅          ⋅          ⋅
+     ⋅          ⋅      1.0+0.0im  …      ⋅          ⋅          ⋅
+     ⋅      1.0+0.0im      ⋅             ⋅          ⋅          ⋅
  1.0+0.0im      ⋅          ⋅             ⋅          ⋅          ⋅
 ```
 """
@@ -716,6 +716,110 @@ Quantum Object:   type=Operator   dims=[20, 20]   size=(400, 400)   ishermitian=
 ```
 """
 ⊗(A::QuantumObject, B::QuantumObject) = kron(A, B)
+
+@doc raw"""
+    permute(A::QuantumObject, order::Vector{Int})
+
+Permute the subsystems of a [`QuantumObject`](@ref) `A` according to the order specified in `order`. So, if `order = [2, 1, 3]`, the first subsystem will become the second, the second will become the first, and the third will remain the same, i.e. H₁ ⊗ H₂ ⊗ H₃ → H₂ ⊗ H₁ ⊗ H₃.
+
+This method currently dispatches only for [`Ket`](@ref), [`Bra`](@ref), and [`Operator`](@ref) types of [`QuantumObject`](@ref).
+
+# Examples
+
+```julia
+ψ1 = fock(2, 0)
+ψ2 = fock(2, 1)
+ψ_12 = tensor(ψ1, ψ2)
+
+permute(ψ_12, [2, 1]) ≈ tensor(ψ2, ψ1)
+
+# Returns true
+```
+
+"""
+function permute end
+
+#  -------------------------------------------------------------
+#  helper functions
+#  -------------------------------------------------------------
+
+function kron_rep(
+    dims;
+    labels="abcdefghijklmnopqrstuvwxyz"[1:length(dims)]
+)
+
+    # create string representations of the subsystems
+    # and store them in the order of the permutation
+    xs = []
+    for i = 1:length(dims)
+        x_i = labels[i] .* string.(1:dims[i])
+        if i != length(dims)
+            x_i .*= "_"
+        end
+        push!(xs, x_i)
+    end
+
+    return kron(xs...)
+end
+
+function kron_permutation(perm::Vector{Int}, dims::Vector{Int})
+    @assert length(perm) == length(dims) "The permutation must have the same length as the number of subsystems"
+    @assert sort(perm) == 1:length(dims) "The permutation must be a permutation of the subsystems"
+
+    # get representations of the base kron product and the permuted one
+    kr_permuted = kron_rep(dims[perm]; labels="abcdefghijklmnopqrstuvwxyz"[perm])
+    kr_base = kron_rep(dims)
+
+    # commute scalar values in each element
+    kr_permuted_commuted = []
+    for i = 1:length(kr_permuted)
+        e = split(kr_permuted[i], "_")
+        sort!(e, by = x -> x[1])
+        e = join(e, "_")
+        push!(kr_permuted_commuted, e)
+    end
+
+    # find the permutation that maps the unpermuted kron product to the permuted one
+    kr_permutation = [
+        findfirst(x -> x == kr_permuted_i, kr_base)
+            for kr_permuted_i ∈ kr_permuted_commuted
+    ]
+
+    return kr_permutation
+end
+
+function permute(
+    ket::QuantumObject{<:AbstractArray{T}, KetQuantumObject},
+    order::AbstractVector{Int}
+) where T
+    if length(order) != length(ket.dims)
+        throw(ArgumentError("The order vector must have the same length as the number of subsystems"))
+    end
+    perm = kron_permutation(order, ket.dims)
+    return QuantumObject(ket.data[perm], ket.type, ket.dims[order])
+end
+
+function permute(
+    bra::QuantumObject{<:AbstractArray{T}, BraQuantumObject},
+    order::AbstractVector{Int}
+) where T
+    if length(order) != length(bra.dims)
+        throw(ArgumentError("The order vector must have the same length as the number of subsystems"))
+    end
+    perm = kron_permutation(order, bra.dims)
+    return QuantumObject(bra.data[:, perm], bra.type, bra.dims[order])
+end
+
+function permute(
+    op::QuantumObject{<:AbstractArray{T}, OperatorQuantumObject},
+    order::AbstractVector{Int}
+) where T
+    if length(order) != length(op.dims)
+        throw(ArgumentError("The order vector must have the same length as the number of subsystems"))
+    end
+    perm = kron_permutation(order, op.dims)
+    return QuantumObject(op.data[perm, perm], op.type, op.dims[order])
+end
 
 LinearAlgebra.triu!(
     A::QuantumObject{<:AbstractArray{T},OpType},
