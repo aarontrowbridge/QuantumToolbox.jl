@@ -3,6 +3,7 @@ export SteadyStateSolver,
     SteadyStateLinearSolver,
     SteadyStateEigenSolver,
     SteadyStateDirectSolver,
+    SteadyStateODESolver,
     SteadyStateFloquetSolver,
     SSFloquetLinearSystem,
     SSFloquetEffectiveLiouvillian
@@ -16,6 +17,7 @@ end
 
 struct SteadyStateDirectSolver <: SteadyStateSolver end
 struct SteadyStateEigenSolver <: SteadyStateSolver end
+struct SteadyStateODESolver <: SteadyStateSolver end
 Base.@kwdef struct SteadyStateLinearSolver{MT<:Union{LinearSolve.SciMLLinearSolveAlgorithm,Nothing}} <:
                    SteadyStateSolver
     alg::MT = nothing
@@ -41,6 +43,37 @@ function steadystate(
 
     return steadystate(L; solver = solver, kwargs...)
 end
+
+function steadystate(
+    L::QuantumObject{<:AbstractArray{T1},SuperOperatorQuantumObject},
+    ρ₀::QuantumObject{<:AbstractArray{T2},OperatorQuantumObject};
+    solver::SteadyStateSolver=SteadyStateODESolver(),
+    kwargs...
+) where {T1, T2}
+    if !isa(solver, SteadyStateODESolver)
+        throw(KeywordArgError("The solver must be a SteadyStateODESolver."))
+    end
+
+    f! = (du, u, p, t) -> mul!(du, p.L, u)
+
+    _ρ₀ = mat2vec(ρ₀.data)
+    _L = L.data
+
+    p = (
+        L = _L,
+    )
+
+    prob = SteadyStateProblem{true, SciMLBase.FullSpecialize}(f!, _ρ₀, p)
+
+
+
+
+end
+
+
+
+
+
 
 function _steadystate(
     L::QuantumObject{<:AbstractArray{T},SuperOperatorQuantumObject},
@@ -183,7 +216,7 @@ This will allow to simultaneously obtain all the ``\hat{\rho}_n``.
 In the case of `SSFloquetEffectiveLiouvillian`, instead, the effective Liouvillian is calculated using the matrix continued fraction method.
 
 !!! note "different return"
-    The two solvers returns different objects. The `SSFloquetLinearSystem` returns a list of `QuantumObject`, containing the density matrices for each Fourier component (`\hat{\rho}_{-n}`, with `n` from `0` to `n_max`), while the `SSFloquetEffectiveLiouvillian` returns only `\hat{\rho}_0`. 
+    The two solvers returns different objects. The `SSFloquetLinearSystem` returns a list of `QuantumObject`, containing the density matrices for each Fourier component (`\hat{\rho}_{-n}`, with `n` from `0` to `n_max`), while the `SSFloquetEffectiveLiouvillian` returns only `\hat{\rho}_0`.
 
 ## Arguments
 - `H_0::QuantumObject`: The Hamiltonian or the Liouvillian of the undriven system.
